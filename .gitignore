@@ -1,0 +1,11 @@
+# Secretos (contiene ERP_PHPSESSID y la contraseña de la BD)
+backend/.env
+.env
+
+backend/.venv/
+__pycache__/
+frontend/node_modules/
+frontend/dist/
+
+# Configuración del despliegue Docker (secretos)
+config/app.env

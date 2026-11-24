@@ -1,0 +1,33 @@
+# Despliegue: docker compose up -d --build   →   http://IP-DEL-SERVIDOR:8001
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: ./config/app.env          # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+    environment:
+      TZ: America/Lima
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Sin "ports": la base solo es accesible desde la app, no desde la red.
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ./config/app.env
+    ports:
+      - "8001:8001"
+    volumes:
+      # Carpeta montada (no el archivo) para que, al cambiar ERP_PHPSESSID,
+      # la app lea el valor nuevo sin reiniciar el contenedor.
+      - ./config:/config:ro
+
+volumes:
+  pgdata:
