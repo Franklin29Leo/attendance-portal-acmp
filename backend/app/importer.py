@@ -98,8 +98,10 @@ def mapear(item: dict) -> dict:
     }
 
 
-def importar(db: Session, payload: Any, origen: str, fecha_consultada: date | None = None) -> ResultadoImportacion:
-    """origen: 'JSON', 'API' o 'API-AUTO'. Si el registro ya existe (mismo id externo) se actualiza."""
+def importar(db: Session, payload: Any, origen: str, fecha_consultada: date | None = None,
+             solo_area: str | None = None) -> ResultadoImportacion:
+    """origen: 'JSON', 'API' o 'API-AUTO'. Si el registro ya existe (mismo id externo) se actualiza.
+    solo_area: si se indica, se omiten los registros de otras áreas (usuarios de una sede)."""
     items = extraer_lista(payload)
     origen_fila = "API" if origen.startswith("API") else origen
     nuevos = actualizados = omitidos = 0
@@ -111,9 +113,17 @@ def importar(db: Session, payload: Any, origen: str, fecha_consultada: date | No
             omitidos += 1
             errores.append(f"Registro {n}: sin fecha válida")
             continue
+        if solo_area and (datos["area"] or "").upper() != solo_area.upper():
+            omitidos += 1
+            errores.append(f"Registro {n}: es de otra sede ({datos['area'] or 'sin área'})")
+            continue
         existente = None
         if datos["external_id"] is not None:
             existente = db.scalar(select(Asistencia).where(Asistencia.external_id == datos["external_id"]))
+        if existente and solo_area and (existente.area or "").upper() != solo_area.upper():
+            omitidos += 1
+            errores.append(f"Registro {n}: pertenece a otra sede")
+            continue
         if existente:
             for k, v in datos.items():
                 setattr(existente, k, v)

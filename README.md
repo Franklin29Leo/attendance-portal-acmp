@@ -10,6 +10,15 @@ Pantallas:
 
 Los registros se identifican por el `id` del sistema externo: volver a cargar el mismo día **actualiza** (por ejemplo, la hora de salida) y no duplica.
 
+## Inicio de sesión y sedes
+
+- Contraseñas guardadas con **bcrypt** (hash con sal; nunca en texto). La sesión es un token firmado (`SECRET_KEY`) en una cookie `httpOnly` que JavaScript no puede leer; dura `SESION_HORAS`.
+- Roles: **Administrador** (todas las sedes; gestiona usuarios y sedes en "Usuarios y sedes") y **Usuario de sede** (solo ve, registra, importa y consulta al ERP su propia sede).
+- Cada sede tiene su **área en el ERP** (ej. `SEDE CHORRILLOS`), que debe coincidir con el campo `area` de IGEA.
+- Primer ingreso: usuario `admin` con `ADMIN_PASSWORD_INICIAL` (o la contraseña temporal que aparece en el log del backend). Se pide cambiarla al entrar.
+- 5 intentos fallidos bloquean ese usuario 5 minutos. Cambiar la contraseña o desactivar un usuario cierra sus sesiones.
+- Para que la contraseña también viaje cifrada por la red, sirve la web por **HTTPS** (proxy inverso) y pon `COOKIE_SECURE=true`.
+
 ## 1. Base de datos
 
 Con Docker: `docker compose up -d`.

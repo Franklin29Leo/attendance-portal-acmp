@@ -4,7 +4,10 @@ import { Resultado } from './CargarJson'
 
 const fmt = (iso) => new Date(iso).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' })
 
-export default function ConsultaAuto({ cfg, onImportado }) {
+export default function ConsultaAuto({ yo, cfg, onImportado }) {
+  const esAdmin = yo.rol === 'ADMIN'
+  const [sedes, setSedes] = useState([])
+  const [sedeId, setSedeId] = useState('')
   const [fecha, setFecha] = useState(hoyISO())
   const [hasta, setHasta] = useState('')
   const [res, setRes] = useState(null)
@@ -13,11 +16,11 @@ export default function ConsultaAuto({ cfg, onImportado }) {
   const [hist, setHist] = useState([])
 
   const cargarHist = () => api.importaciones().then(setHist).catch(() => {})
-  useEffect(() => { cargarHist() }, [])
+  useEffect(() => { cargarHist(); if (esAdmin) api.sedes().then(setSedes).catch(() => {}) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const consultar = async () => {
     setEnviando(true); setError(''); setRes(null)
-    try { setRes(await api.consultar(fecha, hasta)); onImportado() } catch (e) { setError(e.message) } finally { setEnviando(false); cargarHist() }
+    try { setRes(await api.consultar(fecha, hasta, sedeId)); onImportado() } catch (e) { setError(e.message) } finally { setEnviando(false); cargarHist() }
   }
 
   return (
@@ -25,17 +28,19 @@ export default function ConsultaAuto({ cfg, onImportado }) {
       <h2>Consulta al servicio de asistencias</h2>
 
       <div className="estado-sync">
-        {cfg?.api_configurada ? (
+        {cfg && (
           <>
             <p>Servicio: <code>{cfg.api_url}</code></p>
+            <p>Áreas: {cfg.erp_areas?.map((a) => <code key={a}>{a || 'todas'}</code>)}</p>
+            {!cfg.sesion_configurada && (
+              <div className="alerta aviso">Falta la cookie de sesión del ERP (<code>ERP_PHPSESSID</code>) en la configuración del servidor. Pídesela al administrador.</div>
+            )}
             <p>
               Carga automática: {cfg.sync_activo ? <b className="verde">activa</b> : <b className="rojo">desactivada</b>}
               {cfg.sync_activo && <> · todos los días a las <b>{cfg.sync_horas.join(', ')}</b> ({cfg.zona})</>}
             </p>
             {cfg.proximas?.length > 0 && <p className="sub">Próxima ejecución: {fmt(cfg.proximas[0])}</p>}
           </>
-        ) : (
-          <div className="alerta aviso">Falta configurar <code>ASISTENCIA_API_URL</code> en <code>backend/.env</code>. Sin eso no se puede consultar ni programar la carga automática.</div>
         )}
       </div>
 
@@ -43,7 +48,17 @@ export default function ConsultaAuto({ cfg, onImportado }) {
       <div className="fila">
         <label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label>
         <label>Hasta (opcional)<input type="date" value={hasta} min={fecha} onChange={(e) => setHasta(e.target.value)} /></label>
-        <button className="primario" disabled={enviando || !cfg?.api_configurada} onClick={consultar}>
+        {esAdmin ? (
+          <label>Sede
+            <select value={sedeId} onChange={(e) => setSedeId(e.target.value)}>
+              <option value="">Todas las activas</option>
+              {sedes.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </select>
+          </label>
+        ) : (
+          <label>Sede<input value={yo.sede?.nombre || ''} disabled /></label>
+        )}
+        <button className="primario" disabled={enviando} onClick={consultar}>
           {enviando ? 'Consultando…' : 'Consultar y cargar'}
         </button>
       </div>

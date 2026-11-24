@@ -3,10 +3,11 @@ import { api, hhmm, hoyISO } from '../api'
 
 const vacio = () => ({
   fecha: hoyISO(), trabajador_nombre: '', trabajador_dni: '', estado: 'PUNTUAL',
-  hora_entrada: '', hora_salida: '', tienda_nombre: '', area: '', motivo_ausencia: '', observaciones: '',
+  hora_entrada: '', hora_salida: '', sede_id: '', motivo_ausencia: '', observaciones: '',
 })
 
-export default function RegistroManual({ editando, onGuardado, onCancelar }) {
+export default function RegistroManual({ yo, editando, onGuardado, onCancelar }) {
+  const esAdmin = yo.rol === 'ADMIN'
   const [d, setD] = useState(vacio())
   const [trab, setTrab] = useState([])
   const [sedes, setSedes] = useState([])
@@ -26,9 +27,18 @@ export default function RegistroManual({ editando, onGuardado, onCancelar }) {
       Object.keys(x).forEach((k) => { if (editando[k] != null) x[k] = editando[k] })
       x.hora_entrada = hhmm(editando.hora_entrada)
       x.hora_salida = hhmm(editando.hora_salida)
+      x.sede_id = editando.area // se resuelve a id cuando cargan las sedes
       setD(x)
     } else setD(vacio())
   }, [editando])
+
+  // Al editar, convierte el área del registro en el id de su sede
+  useEffect(() => {
+    if (editando && sedes.length) {
+      const s = sedes.find((x) => x.area_erp === editando.area)
+      setD((d) => ({ ...d, sede_id: s ? String(s.id) : '' }))
+    }
+  }, [editando, sedes])
 
   const set = (k) => (e) => setD({ ...d, [k]: e.target.value })
 
@@ -36,7 +46,8 @@ export default function RegistroManual({ editando, onGuardado, onCancelar }) {
   const elegirTrabajador = (k) => (e) => {
     const v = e.target.value
     const t = trab.find((t) => (k === 'trabajador_nombre' ? t.nombre === v : t.dni === v))
-    setD(t ? { ...d, trabajador_nombre: t.nombre, trabajador_dni: t.dni || '', tienda_nombre: d.tienda_nombre || t.sede || '', area: d.area || t.area || '' } : { ...d, [k]: v })
+    const sedeT = t && sedes.find((s) => s.area_erp === t.area)
+    setD(t ? { ...d, trabajador_nombre: t.nombre, trabajador_dni: t.dni || '', sede_id: d.sede_id || (sedeT ? String(sedeT.id) : '') } : { ...d, [k]: v })
   }
 
   const enviar = async (e) => {
@@ -44,12 +55,13 @@ export default function RegistroManual({ editando, onGuardado, onCancelar }) {
     setGuardando(true)
     setMsg(null)
     const body = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v === '' ? null : v]))
+    body.sede_id = body.sede_id ? Number(body.sede_id) : null
     try {
       if (editando) await api.editar(editando.id, body)
       else await api.crear(body)
       setMsg({ ok: true, t: 'Asistencia guardada.' })
       if (editando) onGuardado()
-      else setD({ ...vacio(), fecha: d.fecha, tienda_nombre: d.tienda_nombre })
+      else setD({ ...vacio(), fecha: d.fecha, sede_id: d.sede_id })
     } catch (err) {
       setMsg({ ok: false, t: err.message })
     } finally {
@@ -72,9 +84,15 @@ export default function RegistroManual({ editando, onGuardado, onCancelar }) {
         </label>
         <label>DNI<input list="lista-dni" value={d.trabajador_dni} onChange={elegirTrabajador('trabajador_dni')} maxLength={20} /></label>
         <label>Sede
-          <input list="lista-sedes" value={d.tienda_nombre} onChange={set('tienda_nombre')} />
+          {esAdmin ? (
+            <select required value={d.sede_id} onChange={set('sede_id')}>
+              <option value="">Elegir…</option>
+              {sedes.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+            </select>
+          ) : (
+            <input value={yo.sede?.nombre || ''} disabled />
+          )}
         </label>
-        <label>Área<input value={d.area} onChange={set('area')} /></label>
         <label>Estado
           <select value={d.estado} onChange={set('estado')}>
             {estados.map((s) => <option key={s}>{s}</option>)}
@@ -93,7 +111,6 @@ export default function RegistroManual({ editando, onGuardado, onCancelar }) {
 
       <datalist id="lista-trab">{trab.map((t) => <option key={t.dni || t.nombre} value={t.nombre}>{t.dni} · {t.sede}</option>)}</datalist>
       <datalist id="lista-dni">{trab.filter((t) => t.dni).map((t) => <option key={t.dni} value={t.dni}>{t.nombre}</option>)}</datalist>
-      <datalist id="lista-sedes">{sedes.map((s) => <option key={s} value={s} />)}</datalist>
     </section>
   )
 }

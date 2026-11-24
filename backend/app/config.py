@@ -31,6 +31,21 @@ def erp_phpsessid() -> str:
     Nunca se envía al frontend ni se escribe en logs."""
     valor = dotenv_values(ENV_PATH).get("ERP_PHPSESSID") or os.getenv("ERP_PHPSESSID", "")
     return (valor or "").strip()
+
+
+# ---- Inicio de sesión ----
+# Clave para firmar los tokens de sesión. Si falta, se genera una al iniciar
+# (las sesiones se pierden al reiniciar). Generar con: python -c "import secrets;print(secrets.token_urlsafe(48))"
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+SESION_HORAS = float(os.getenv("SESION_HORAS", "12"))
+# true cuando la web se sirve por HTTPS (la cookie solo viaja cifrada)
+COOKIE_SECURE = _bool(os.getenv("COOKIE_SECURE"), False)
+# Primer administrador (solo se crea si no hay ningún usuario)
+ADMIN_USUARIO = os.getenv("ADMIN_USUARIO", "admin")
+ADMIN_PASSWORD_INICIAL = os.getenv("ADMIN_PASSWORD_INICIAL", "")
+# Sedes que se crean la primera vez: NOMBRE=ÁREA DEL ERP, separadas por coma
+SEDES_INICIALES = os.getenv("SEDES_INICIALES", "CHORRILLOS=SEDE CHORRILLOS,TIZA=SEDE TIZA")
+
 FOTO_BASE_URL = os.getenv("FOTO_BASE_URL", "").rstrip("/")
 SYNC_ACTIVO = _bool(os.getenv("SYNC_ACTIVO"), True)
 SYNC_HORAS = [h.strip() for h in os.getenv("SYNC_HORAS", "08:30,13:00,18:30").split(",") if h.strip()]

@@ -84,3 +84,23 @@ textarea.json { width: 100%; font-family: ui-monospace, Consolas, monospace; fon
 .fotos figure { margin: 0; }
 .fotos img { max-width: 260px; max-height: 260px; border-radius: 6px; border: 1px solid var(--borde); }
 .fotos figcaption { font-size: .8rem; color: var(--sub); }
+
+/* ---- Sesión ---- */
+.login-fondo { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, var(--primario), #0f2c47); padding: 20px; }
+.login { background: #fff; border-radius: 12px; padding: 28px 32px; width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.login h1 { margin: 0; font-size: 1.3rem; color: var(--primario); }
+.login label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--sub); }
+.login .alerta { margin: 0; }
+header .usuario { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+header .usuario span { display: flex; flex-direction: column; text-align: right; line-height: 1.2; }
+header .usuario small { color: #b8cde2; font-size: .78rem; }
+header .usuario button { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.25); }
+
+/* ---- Administración ---- */
+.fila-titulo { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; }
+.fila-titulo h2 { margin: 0; }
+.recuadro { border: 1px solid var(--borde); border-radius: 8px; padding: 14px; margin-bottom: 14px; background: #fafbfd; }
+.form label.check { flex-direction: row; align-items: center; gap: 6px; }
+.sede-fija { padding: 7px 10px; background: #e0ecfb; color: var(--primario); border-radius: 6px; font-weight: 600; font-size: .9rem; }
+.chip:disabled { cursor: default; opacity: .7; }
+.estado-sync code { margin-right: 6px; }

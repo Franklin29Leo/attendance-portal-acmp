@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 
-from sqlalchemy import JSON, Date, DateTime, Float, Integer, String, Text, Time, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, Time, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 
@@ -55,3 +55,33 @@ class Importacion(Base):
     actualizados: Mapped[int] = mapped_column(Integer, default=0)
     ok: Mapped[bool] = mapped_column(default=True)
     mensaje: Mapped[str | None] = mapped_column(Text)
+
+
+class Sede(Base):
+    __tablename__ = "sedes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nombre: Mapped[str] = mapped_column(String(100), unique=True)          # CHORRILLOS
+    area_erp: Mapped[str] = mapped_column(String(200), unique=True)        # SEDE CHORRILLOS (campo "area" del ERP)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    usuario: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(100))                # bcrypt, nunca la contraseña
+    nombre: Mapped[str] = mapped_column(String(100))
+    apellido: Mapped[str] = mapped_column(String(100))
+    dni: Mapped[str | None] = mapped_column(String(20), unique=True)
+    rol: Mapped[str] = mapped_column(String(20), default="USUARIO")        # ADMIN | USUARIO
+    sede_id: Mapped[int | None] = mapped_column(ForeignKey("sedes.id"))    # obligatorio para USUARIO
+    activo: Mapped[bool] = mapped_column(Boolean, default=True)
+    debe_cambiar_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Se incrementa al cambiar la contraseña o desactivar: invalida las sesiones abiertas
+    version_sesion: Mapped[int] = mapped_column(Integer, default=1)
+    ultimo_acceso: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    creado: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    sede: Mapped[Sede | None] = relationship(lazy="joined")

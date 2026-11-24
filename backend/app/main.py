@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from . import config
 from .database import Base, SessionLocal, engine, get_db
 from .importer import ErpError, ErpSesionExpirada, importar, sincronizar
-from .models import Asistencia, Importacion
+from .auth import area_de, datos_iniciales, router as auth_router, usuario_actual
+from .models import Asistencia, Importacion, Sede, Usuario
 from .schemas import AsistenciaCreate, AsistenciaOut, ImportacionOut, ResultadoImportacion
 
 logging.basicConfig(level=logging.INFO)
@@ -31,11 +32,17 @@ def hoy() -> date:
     return datetime.now(TZ).date()
 
 
+def areas_activas(db: Session) -> list[str]:
+    """Áreas del ERP de las sedes activas; si no hay sedes, ERP_AREAS o "" (todas)."""
+    areas = list(db.scalars(select(Sede.area_erp).where(Sede.activo.is_(True)).order_by(Sede.nombre)))
+    return areas or config.ERP_AREAS or [""]
+
+
 def tarea_automatica():
-    """Consulta al ERP el día actual, una vez por cada área de ERP_AREAS (o todas si está vacío)."""
+    """Consulta al ERP el día actual, una vez por cada sede activa."""
     db = SessionLocal()
     try:
-        for area in config.ERP_AREAS or [""]:
+        for area in areas_activas(db):
             try:
                 r = sincronizar(db, hoy(), area=area, origen="API-AUTO")
                 log.info("Carga automática [%s]: %s registros, %s nuevos, %s actualizados",
@@ -49,6 +56,8 @@ def tarea_automatica():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        datos_iniciales(db)
     if config.SYNC_ACTIVO:
         for h in config.SYNC_HORAS:
             hh, mm = h.split(":")
@@ -62,29 +71,34 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Asistencia por sedes", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
+app.include_router(auth_router)
 
 
 # ---------- Consulta ----------
+# Todas las rutas piden sesión (usuario_actual). Un USUARIO solo ve su sede (area_de).
 @app.get("/api/asistencias", response_model=list[AsistenciaOut])
 def listar(
     fecha: date | None = None,
     desde: date | None = None,
     hasta: date | None = None,
-    sede: str | None = None,
+    sede_id: int | None = None,
     estado: str | None = None,
     q: str | None = None,
+    u: Usuario = Depends(usuario_actual),
     db: Session = Depends(get_db),
 ):
     stmt = select(Asistencia)
+    area = area_de(u, db, sede_id)
+    if area:
+        stmt = stmt.where(Asistencia.area == area)
     if fecha:
         stmt = stmt.where(Asistencia.fecha == fecha)
     if desde:
         stmt = stmt.where(Asistencia.fecha >= desde)
     if hasta:
         stmt = stmt.where(Asistencia.fecha <= hasta)
-    if sede:
-        stmt = stmt.where(Asistencia.tienda_nombre == sede)
     if estado:
         stmt = stmt.where(Asistencia.estado == estado)
     if q:
@@ -96,48 +110,66 @@ def listar(
 
 
 @app.get("/api/resumen")
-def resumen(fecha: date | None = None, sede: str | None = None, db: Session = Depends(get_db)):
+def resumen(fecha: date | None = None, sede_id: int | None = None,
+            u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     fecha = fecha or hoy()
     stmt = select(Asistencia.estado, func.count()).where(Asistencia.fecha == fecha)
-    if sede:
-        stmt = stmt.where(Asistencia.tienda_nombre == sede)
+    area = area_de(u, db, sede_id)
+    if area:
+        stmt = stmt.where(Asistencia.area == area)
     filas = db.execute(stmt.group_by(Asistencia.estado)).all()
     por_estado = {(e or "SIN ESTADO"): n for e, n in filas}
     return {"fecha": fecha, "total": sum(por_estado.values()), "por_estado": por_estado}
 
 
-@app.get("/api/sedes", response_model=list[str])
-def sedes(db: Session = Depends(get_db)):
-    return [s for s in db.scalars(select(Asistencia.tienda_nombre).distinct().order_by(Asistencia.tienda_nombre)) if s]
-
-
 @app.get("/api/estados", response_model=list[str])
-def estados(db: Session = Depends(get_db)):
+def estados(_: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     base = {"PUNTUAL", "TARDANZA", "FALTA", "LICENCIA", "VACACIONES", "PERMISO"}
     base |= {e for e in db.scalars(select(Asistencia.estado).distinct()) if e}
     return sorted(base)
 
 
 @app.get("/api/trabajadores")
-def trabajadores(db: Session = Depends(get_db)):
+def trabajadores(u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     """Lista única de trabajadores ya vistos (para autocompletar el registro manual)."""
-    filas = db.execute(
-        select(Asistencia.trabajador_dni, Asistencia.trabajador_nombre, Asistencia.trabajador_id,
-               Asistencia.tienda_nombre, Asistencia.area)
-        .order_by(Asistencia.fecha.desc())
-    ).all()
+    stmt = select(Asistencia.trabajador_dni, Asistencia.trabajador_nombre, Asistencia.trabajador_id,
+                  Asistencia.tienda_nombre, Asistencia.area).order_by(Asistencia.fecha.desc())
+    area = area_de(u, db)
+    if area:
+        stmt = stmt.where(Asistencia.area == area)
     vistos: dict[str, dict] = {}
-    for dni, nombre, tid, sede, area in filas:
+    for dni, nombre, tid, sede, ar in db.execute(stmt).all():
         clave = dni or nombre
         if clave not in vistos:
-            vistos[clave] = {"dni": dni, "nombre": nombre, "trabajador_id": tid, "sede": sede, "area": area}
+            vistos[clave] = {"dni": dni, "nombre": nombre, "trabajador_id": tid, "sede": sede, "area": ar}
     return sorted(vistos.values(), key=lambda x: x["nombre"] or "")
 
 
 # ---------- Registro manual ----------
+def _sede_para(u: Usuario, sede_id: int | None, db: Session) -> Sede:
+    if u.rol != "ADMIN":
+        if not u.sede:
+            raise HTTPException(403, "Tu usuario no tiene sede asignada")
+        return u.sede
+    s = db.get(Sede, sede_id) if sede_id else None
+    if not s:
+        raise HTTPException(400, "Elige la sede")
+    return s
+
+
+def _asistencia_propia(aid: int, u: Usuario, db: Session) -> Asistencia:
+    a = db.get(Asistencia, aid)
+    area = area_de(u, db)
+    if not a or (area and (a.area or "").upper() != area.upper()):
+        raise HTTPException(404, "No existe")
+    return a
+
+
 @app.post("/api/asistencias", response_model=AsistenciaOut, status_code=201)
-def crear(datos: AsistenciaCreate, db: Session = Depends(get_db)):
-    a = Asistencia(**datos.model_dump(), origen="MANUAL")
+def crear(datos: AsistenciaCreate, u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    sede = _sede_para(u, datos.sede_id, db)
+    a = Asistencia(**datos.model_dump(exclude={"sede_id"}), area=sede.area_erp, tienda_nombre=sede.nombre,
+                   origen="MANUAL", autorizado_por=f"{u.nombre} {u.apellido}")
     db.add(a)
     db.commit()
     db.refresh(a)
@@ -145,40 +177,41 @@ def crear(datos: AsistenciaCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/api/asistencias/{aid}", response_model=AsistenciaOut)
-def editar(aid: int, datos: AsistenciaCreate, db: Session = Depends(get_db)):
-    a = db.get(Asistencia, aid)
-    if not a:
-        raise HTTPException(404, "No existe")
-    for k, v in datos.model_dump().items():
+def editar(aid: int, datos: AsistenciaCreate, u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    a = _asistencia_propia(aid, u, db)
+    for k, v in datos.model_dump(exclude={"sede_id"}).items():
         setattr(a, k, v)
+    if u.rol == "ADMIN" and datos.sede_id:
+        sede = _sede_para(u, datos.sede_id, db)
+        if (a.area or "").upper() != sede.area_erp:
+            a.area, a.tienda_nombre = sede.area_erp, sede.nombre
     db.commit()
     db.refresh(a)
     return a
 
 
 @app.delete("/api/asistencias/{aid}", status_code=204)
-def borrar(aid: int, db: Session = Depends(get_db)):
-    a = db.get(Asistencia, aid)
-    if not a:
-        raise HTTPException(404, "No existe")
-    db.delete(a)
+def borrar(aid: int, u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
+    db.delete(_asistencia_propia(aid, u, db))
     db.commit()
 
 
 # ---------- Carga manual de JSON ----------
 @app.post("/api/importar/json", response_model=ResultadoImportacion)
-def importar_json(payload: dict | list = Body(...), db: Session = Depends(get_db)):
+def importar_json(payload: dict | list = Body(...), u: Usuario = Depends(usuario_actual),
+                  db: Session = Depends(get_db)):
     try:
-        return importar(db, payload, "JSON")
+        return importar(db, payload, "JSON", solo_area=area_de(u, db))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 @app.post("/api/importar/archivo", response_model=ResultadoImportacion)
-async def importar_archivo(archivo: UploadFile = File(...), db: Session = Depends(get_db)):
+async def importar_archivo(archivo: UploadFile = File(...), u: Usuario = Depends(usuario_actual),
+                           db: Session = Depends(get_db)):
     contenido = (await archivo.read()).decode("utf-8-sig")
     try:
-        return importar(db, json.loads(contenido), "JSON")
+        return importar(db, json.loads(contenido), "JSON", solo_area=area_de(u, db))
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"El archivo no es un JSON válido: {e}")
     except ValueError as e:
@@ -190,24 +223,27 @@ async def importar_archivo(archivo: UploadFile = File(...), db: Session = Depend
 def importar_consulta(
     fecha: date | None = Query(None, description="fecha_inicio; por defecto hoy"),
     hasta: date | None = Query(None, description="fecha_fin; por defecto igual a fecha"),
-    area: str | None = Query(None, description="Área del ERP (ej. SEDE CHORRILLOS); por defecto ERP_AREAS"),
+    sede_id: int | None = Query(None, description="Sede a consultar (ADMIN); por defecto todas las activas"),
     estado: str | None = Query(None, description="Filtro estado del ERP (opcional)"),
     trabajador_id: int | None = Query(None, description="Filtro trabajador_id del ERP (opcional)"),
     cliente_id: int | None = Query(None, description="Filtro cliente_id del ERP (opcional)"),
+    u: Usuario = Depends(usuario_actual),
     db: Session = Depends(get_db),
 ):
     inicio = fecha or hoy()
     fin = hasta or inicio
     if fin < inicio or (fin - inicio).days > 62:
         raise HTTPException(400, "Rango inválido (máximo 62 días)")
-    areas = [area] if area is not None else (config.ERP_AREAS or [""])
+    area = area_de(u, db, sede_id)
+    areas = [area] if area else areas_activas(db)
     total = ResultadoImportacion(total=0, nuevos=0, actualizados=0, omitidos=0)
     for a in areas:
         try:
             r = sincronizar(db, inicio, fin, area=a, estado=estado,
                             trabajador_id=trabajador_id, cliente_id=cliente_id)
         except ErpSesionExpirada as e:
-            raise HTTPException(401, str(e))
+            # 424 (y no 401) para no confundirlo con la sesión de esta web
+            raise HTTPException(424, str(e))
         except ErpError as e:
             raise HTTPException(502, f"Error consultando el ERP ({a or 'todas las áreas'}): {e}")
         total.total += r.total
@@ -219,19 +255,19 @@ def importar_consulta(
 
 
 @app.get("/api/importaciones", response_model=list[ImportacionOut])
-def importaciones(db: Session = Depends(get_db)):
+def importaciones(_: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     return db.scalars(select(Importacion).order_by(Importacion.id.desc()).limit(30)).all()
 
 
 @app.get("/api/config")
-def ver_config():
+def ver_config(u: Usuario = Depends(usuario_actual), db: Session = Depends(get_db)):
     proximas = []
     if scheduler.running:
         proximas = sorted(j.next_run_time.isoformat() for j in scheduler.get_jobs() if j.next_run_time)
     return {
         "api_configurada": True,
         "api_url": config.ERP_URL,
-        "erp_areas": config.ERP_AREAS,
+        "erp_areas": [area_de(u, db)] if u.rol != "ADMIN" else areas_activas(db),
         "sesion_configurada": bool(config.erp_phpsessid()),  # solo si existe; nunca el valor
         "sync_activo": scheduler.running,
         "sync_horas": config.SYNC_HORAS,

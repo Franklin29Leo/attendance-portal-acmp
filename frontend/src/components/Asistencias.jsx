@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, hhmm, hoyISO } from '../api'
+import { Resultado } from './CargarJson'
 
 const moverDia = (iso, n) => {
   const d = new Date(iso + 'T12:00:00')
@@ -12,8 +13,9 @@ export function Estado({ v }) {
   return <span className={`badge b-${c}`}>{v || '—'}</span>
 }
 
-export default function Asistencias({ version, fotoBase, onEditar }) {
-  const [f, setF] = useState({ fecha: hoyISO(), sede: '', estado: '', q: '' })
+export default function Asistencias({ yo, version, fotoBase, onEditar, onImportado }) {
+  const esAdmin = yo.rol === 'ADMIN'
+  const [f, setF] = useState({ fecha: hoyISO(), sede_id: '', estado: '', q: '' })
   const [filas, setFilas] = useState([])
   const [resumen, setResumen] = useState(null)
   const [sedes, setSedes] = useState([])
@@ -21,6 +23,9 @@ export default function Asistencias({ version, fotoBase, onEditar }) {
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [detalle, setDetalle] = useState(null)
+  const [consultando, setConsultando] = useState(false)
+  const [resErp, setResErp] = useState(null)
+  const [errorErp, setErrorErp] = useState('')
 
   useEffect(() => {
     api.sedes().then(setSedes).catch(() => {})
@@ -30,7 +35,7 @@ export default function Asistencias({ version, fotoBase, onEditar }) {
   const cargar = () => {
     setCargando(true)
     setError('')
-    Promise.all([api.asistencias(f), api.resumen({ fecha: f.fecha, sede: f.sede })])
+    Promise.all([api.asistencias(f), api.resumen({ fecha: f.fecha, sede_id: f.sede_id })])
       .then(([a, r]) => { setFilas(a); setResumen(r) })
       .catch((e) => setError(e.message))
       .finally(() => setCargando(false))
@@ -43,11 +48,27 @@ export default function Asistencias({ version, fotoBase, onEditar }) {
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
 
+  // Conteo por sede (área del ERP) para los accesos rápidos del administrador
   const porSede = useMemo(() => {
     const m = {}
-    filas.forEach((a) => { const s = a.tienda_nombre || 'SIN SEDE'; m[s] = (m[s] || 0) + 1 })
+    filas.forEach((a) => { const k = a.area || 'SIN SEDE'; m[k] = (m[k] || 0) + 1 })
     return m
   }, [filas])
+  const sedePorArea = (area) => sedes.find((s) => s.area_erp === area)
+
+  // Trae del ERP el día elegido (de la sede filtrada, o la del usuario) y recarga la tabla
+  const consultarErp = async () => {
+    setConsultando(true); setErrorErp(''); setResErp(null)
+    try {
+      setResErp(await api.consultar(f.fecha, null, esAdmin ? f.sede_id : null))
+      onImportado()
+    } catch (e) {
+      setErrorErp(e.message)
+    } finally {
+      setConsultando(false)
+    }
+  }
+  const nombreSede = esAdmin ? (sedes.find((s) => String(s.id) === String(f.sede_id))?.nombre || 'todas las sedes') : yo.sede?.nombre
 
   const borrar = async (a) => {
     if (!confirm(`¿Eliminar la asistencia de ${a.trabajador_nombre} del ${a.fecha}?`)) return
@@ -65,17 +86,28 @@ export default function Asistencias({ version, fotoBase, onEditar }) {
           <button onClick={() => setF({ ...f, fecha: moverDia(f.fecha, 1) })} title="Día siguiente">▶</button>
           <button onClick={() => setF({ ...f, fecha: hoyISO() })}>Hoy</button>
         </div>
-        <select value={f.sede} onChange={set('sede')}>
-          <option value="">Todas las sedes</option>
-          {sedes.map((s) => <option key={s}>{s}</option>)}
-        </select>
+        {esAdmin ? (
+          <select value={f.sede_id} onChange={set('sede_id')}>
+            <option value="">Todas las sedes</option>
+            {sedes.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+          </select>
+        ) : (
+          <span className="sede-fija">Sede {yo.sede?.nombre}</span>
+        )}
         <select value={f.estado} onChange={set('estado')}>
           <option value="">Todos los estados</option>
           {estados.map((s) => <option key={s}>{s}</option>)}
         </select>
         <input placeholder="Buscar nombre o DNI" value={f.q} onChange={set('q')} />
         <button onClick={cargar}>Actualizar</button>
+        <button className="primario" onClick={consultarErp} disabled={consultando}
+          title={`Trae del ERP las asistencias del ${f.fecha} (${nombreSede}) y las guarda`}>
+          {consultando ? 'Consultando ERP…' : '⟳ Consultar ERP'}
+        </button>
       </div>
+
+      {errorErp && <div className="alerta error">{errorErp}</div>}
+      {resErp && <Resultado r={resErp} />}
 
       {resumen && (
         <div className="tarjetas">
@@ -88,11 +120,16 @@ export default function Asistencias({ version, fotoBase, onEditar }) {
         </div>
       )}
 
-      {!f.sede && Object.keys(porSede).length > 1 && (
+      {esAdmin && !f.sede_id && Object.keys(porSede).length > 1 && (
         <div className="sedes-chips">
-          {Object.entries(porSede).map(([s, n]) => (
-            <button key={s} className="chip" onClick={() => setF({ ...f, sede: s })}>{s} <b>{n}</b></button>
-          ))}
+          {Object.entries(porSede).map(([area, n]) => {
+            const s = sedePorArea(area)
+            return (
+              <button key={area} className="chip" disabled={!s} onClick={() => s && setF({ ...f, sede_id: String(s.id) })}>
+                {s?.nombre || area} <b>{n}</b>
+              </button>
+            )
+          })}
         </div>
       )}
 
