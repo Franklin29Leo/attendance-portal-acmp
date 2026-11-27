@@ -37,7 +37,7 @@ export default function ConsultaAuto({ yo, cfg, onImportado }) {
             )}
             <p>
               Carga automática: {cfg.sync_activo ? <b className="verde">activa</b> : <b className="rojo">desactivada</b>}
-              {cfg.sync_activo && <> · todos los días a las <b>{cfg.sync_horas.join(', ')}</b> ({cfg.zona})</>}
+              {cfg.sync_activo && <> · <b>{cfg.sync_descripcion}</b> ({cfg.zona})</>}
             </p>
             {cfg.proximas?.length > 0 && <p className="sub">Próxima ejecución: {fmt(cfg.proximas[0])}</p>}
           </>

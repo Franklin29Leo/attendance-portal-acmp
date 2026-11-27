@@ -104,3 +104,8 @@ header .usuario button { background: rgba(255,255,255,.12); color: #fff; border-
 .sede-fija { padding: 7px 10px; background: #e0ecfb; color: var(--primario); border-radius: 6px; font-weight: 600; font-size: .9rem; }
 .chip:disabled { cursor: default; opacity: .7; }
 .estado-sync code { margin-right: 6px; }
+
+/* ---- Exportar Excel ---- */
+.exportar { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.exportar label { display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--sub); }
+button.excel { background: #1d6f42; color: #fff; border-color: #1d6f42; }

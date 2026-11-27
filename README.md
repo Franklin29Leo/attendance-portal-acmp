@@ -3,10 +3,10 @@
 React + Vite (frontend) · FastAPI (backend) · PostgreSQL.
 
 Pantallas:
-1. **Asistencias**: por día (◀ ▶ / Hoy), filtro por sede, estado y búsqueda por nombre o DNI. Tarjetas con el total por estado, hora de entrada y salida, y detalle con foto y ubicación.
+1. **Asistencias**: por día (◀ ▶ / Hoy), filtro por sede, estado y búsqueda por nombre o DNI. Tarjetas con el total por estado, hora de entrada y salida, y detalle con foto y ubicación. **⬇ Exportar Excel** descarga el día elegido con los mismos filtros (y opcionalmente un rango "hasta", máximo 31 días, una hoja por día) más una hoja de resumen por sede y estado (`GET /api/exportar/excel`).
 2. **Registro manual**: formulario que autocompleta al trabajador (DNI, sede) con los que ya están en la base. También sirve para editar.
 3. **Cargar JSON**: pegar la respuesta del GET o subir el archivo `.json`/`.txt`.
-4. **Consulta automática**: botón "Consultar y cargar" (un día o un rango) e historial de cargas. Además, el backend consulta solo el día actual a las horas de `SYNC_HORAS`.
+4. **Consulta automática**: botón "Consultar y cargar" (un día o un rango) e historial de cargas. Además, el backend consulta solo el día actual cada `SYNC_CADA_HORAS` horas (por defecto 2: 00:00, 02:00, 04:00…).
 
 Los registros se identifican por el `id` del sistema externo: volver a cargar el mismo día **actualiza** (por ejemplo, la hora de salida) y no duplica.
 
@@ -48,7 +48,7 @@ Variables principales en `backend/.env`:
 | `ERP_AREAS` | Áreas a consultar, separadas por coma (ej. `SEDE CHORRILLOS`); vacío = todas |
 | `ERP_PHPSESSID` | Cookie de sesión del ERP. **Secreta**; se relee en cada consulta, al vencer solo se reemplaza |
 | `FOTO_BASE_URL` | Dominio para mostrar `foto_entrada` (viene como ruta relativa) |
-| `SYNC_ACTIVO`, `SYNC_HORAS` | Carga automática diaria, p. ej. `08:30,09:30,13:00,18:30` |
+| `SYNC_ACTIVO`, `SYNC_CADA_HORAS`, `SYNC_MINUTO` | Carga automática cada N horas (por defecto 2, en punto). Con `SYNC_CADA_HORAS=0` usa las horas fijas de `SYNC_HORAS`, p. ej. `08:30,13:00,18:30` |
 
 > Cuando la sesión del ERP vence, la consulta responde "La sesión del ERP no es válida o expiró": entra a app.igeaerp.com, copia la cookie `PHPSESSID` (F12 → Aplicación → Cookies) y pégala en `ERP_PHPSESSID`.
 >

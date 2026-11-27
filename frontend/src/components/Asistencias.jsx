@@ -68,6 +68,14 @@ export default function Asistencias({ yo, version, fotoBase, onEditar, onImporta
       setConsultando(false)
     }
   }
+  const [exportando, setExportando] = useState(false)
+  const [hastaExp, setHastaExp] = useState('')
+  const exportar = async () => {
+    setExportando(true); setError('')
+    try {
+      await api.exportarExcel({ fecha: f.fecha, hasta: hastaExp, sede_id: esAdmin ? f.sede_id : '', estado: f.estado, q: f.q })
+    } catch (e) { setError(e.message) } finally { setExportando(false) }
+  }
   const nombreSede = esAdmin ? (sedes.find((s) => String(s.id) === String(f.sede_id))?.nombre || 'todas las sedes') : yo.sede?.nombre
 
   const borrar = async (a) => {
@@ -104,6 +112,15 @@ export default function Asistencias({ yo, version, fotoBase, onEditar, onImporta
           title={`Trae del ERP las asistencias del ${f.fecha} (${nombreSede}) y las guarda`}>
           {consultando ? 'Consultando ERP…' : '⟳ Consultar ERP'}
         </button>
+        <span className="exportar">
+          <label title="Opcional: exporta del día elegido hasta esta fecha, una hoja por día">
+            hasta <input type="date" value={hastaExp} min={f.fecha} onChange={(e) => setHastaExp(e.target.value)} />
+          </label>
+          <button className="excel" onClick={exportar} disabled={exportando}
+            title={`Descarga en Excel las asistencias del ${f.fecha}${hastaExp ? ` al ${hastaExp}` : ''} (${nombreSede}) con los filtros actuales`}>
+            {exportando ? 'Generando…' : '⬇ Exportar Excel'}
+          </button>
+        </span>
       </div>
 
       {errorErp && <div className="alerta error">{errorErp}</div>}

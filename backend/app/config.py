@@ -49,5 +49,8 @@ SEDES_INICIALES = os.getenv("SEDES_INICIALES", "CHORRILLOS=SEDE CHORRILLOS,TIZA=
 FOTO_BASE_URL = os.getenv("FOTO_BASE_URL", "").rstrip("/")
 SYNC_ACTIVO = _bool(os.getenv("SYNC_ACTIVO"), True)
 SYNC_HORAS = [h.strip() for h in os.getenv("SYNC_HORAS", "08:30,13:00,18:30").split(",") if h.strip()]
+# Cada cuántas horas se consulta el ERP (en punto: 00:00, 02:00, 04:00...). 0 = usar SYNC_HORAS
+SYNC_CADA_HORAS = max(0, min(24, int(os.getenv("SYNC_CADA_HORAS", "2") or 0)))
+SYNC_MINUTO = max(0, min(59, int(os.getenv("SYNC_MINUTO", "0") or 0)))
 TZ_LOCAL = os.getenv("TZ_LOCAL", "America/Lima")
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]

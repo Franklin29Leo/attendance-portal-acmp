@@ -43,6 +43,20 @@ export const api = {
   },
   consultar: (fecha, hasta, sede_id) => req('/api/importar/consulta' + qs({ fecha, hasta, sede_id }), { method: 'POST' }),
   importaciones: () => req('/api/importaciones'),
+  // Descarga el Excel (una hoja por día + resumen) con los mismos filtros de la pantalla
+  exportarExcel: async (f) => {
+    const r = await fetch(BASE + '/api/exportar/excel' + qs(f), { credentials: 'include' })
+    if (r.status === 401) alNoAutorizado()
+    if (!r.ok) {
+      const d = (await r.json().catch(() => null))?.detail
+      throw new Error(typeof d === 'string' ? d : `Error ${r.status}`)
+    }
+    const nombre = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')?.[1] || 'asistencia.xlsx'
+    const url = URL.createObjectURL(await r.blob())
+    const a = Object.assign(document.createElement('a'), { href: url, download: nombre })
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  },
   config: () => req('/api/config'),
 
   // Sesión

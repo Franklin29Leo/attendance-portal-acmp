@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import unicodedata
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -10,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .database import Base, SessionLocal, engine, get_db
 from .importer import ErpError, ErpSesionExpirada, importar, sincronizar
+from .excel import generar as generar_excel
 from .auth import area_de, datos_iniciales, router as auth_router, usuario_actual
 from .models import Asistencia, Importacion, Sede, Usuario
 from .schemas import AsistenciaCreate, AsistenciaOut, ImportacionOut, ResultadoImportacion
@@ -36,6 +38,13 @@ def areas_activas(db: Session) -> list[str]:
     """Áreas del ERP de las sedes activas; si no hay sedes, ERP_AREAS o "" (todas)."""
     areas = list(db.scalars(select(Sede.area_erp).where(Sede.activo.is_(True)).order_by(Sede.nombre)))
     return areas or config.ERP_AREAS or [""]
+
+
+def descripcion_sync() -> str:
+    if config.SYNC_CADA_HORAS:
+        n = config.SYNC_CADA_HORAS
+        return f"cada {n} hora{'s' if n > 1 else ''} (al minuto {config.SYNC_MINUTO:02d})"
+    return "todos los días a las " + ", ".join(config.SYNC_HORAS)
 
 
 def tarea_automatica():
@@ -59,12 +68,17 @@ async def lifespan(app: FastAPI):
     with SessionLocal() as db:
         datos_iniciales(db)
     if config.SYNC_ACTIVO:
-        for h in config.SYNC_HORAS:
-            hh, mm = h.split(":")
-            scheduler.add_job(tarea_automatica, CronTrigger(hour=int(hh), minute=int(mm), timezone=TZ),
-                              id=f"sync-{h}", replace_existing=True)
+        if config.SYNC_CADA_HORAS:
+            scheduler.add_job(tarea_automatica, CronTrigger(hour=f"*/{config.SYNC_CADA_HORAS}",
+                                                            minute=config.SYNC_MINUTO, timezone=TZ),
+                              id="sync-intervalo", replace_existing=True, coalesce=True, max_instances=1)
+        else:
+            for h in config.SYNC_HORAS:
+                hh, mm = h.split(":")
+                scheduler.add_job(tarea_automatica, CronTrigger(hour=int(hh), minute=int(mm), timezone=TZ),
+                                  id=f"sync-{h}", replace_existing=True, coalesce=True, max_instances=1)
         scheduler.start()
-        log.info("Carga automática programada a las %s", ", ".join(config.SYNC_HORAS))
+        log.info("Carga automática: %s", descripcion_sync())
     yield
     if scheduler.running:
         scheduler.shutdown(wait=False)
@@ -120,6 +134,47 @@ def resumen(fecha: date | None = None, sede_id: int | None = None,
     filas = db.execute(stmt.group_by(Asistencia.estado)).all()
     por_estado = {(e or "SIN ESTADO"): n for e, n in filas}
     return {"fecha": fecha, "total": sum(por_estado.values()), "por_estado": por_estado}
+
+
+@app.get("/api/exportar/excel")
+def exportar_excel(
+    fecha: date | None = Query(None, description="Día a exportar; por defecto hoy"),
+    hasta: date | None = Query(None, description="Último día (opcional): una hoja por día"),
+    sede_id: int | None = None,
+    estado: str | None = None,
+    q: str | None = None,
+    u: Usuario = Depends(usuario_actual),
+    db: Session = Depends(get_db),
+):
+    inicio = fecha or hoy()
+    fin = hasta or inicio
+    if fin < inicio or (fin - inicio).days > 31:
+        raise HTTPException(400, "Rango inválido (máximo 31 días)")
+    area = area_de(u, db, sede_id)
+    stmt = select(Asistencia).where(Asistencia.fecha >= inicio, Asistencia.fecha <= fin)
+    if area:
+        stmt = stmt.where(Asistencia.area == area)
+    if estado:
+        stmt = stmt.where(Asistencia.estado == estado)
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Asistencia.trabajador_nombre.ilike(like), Asistencia.trabajador_dni.ilike(like)))
+    filas = db.scalars(stmt).all()
+
+    sede = db.scalar(select(Sede).where(Sede.area_erp == area)) if area else None
+    sede_txt = sede.nombre if sede else (area or "Todas las sedes")
+    if estado:
+        sede_txt += f" · estado {estado}"
+    nombres = {s.area_erp.upper(): s.nombre for s in db.scalars(select(Sede))}
+    contenido = generar_excel(filas, inicio, fin, sede_txt, f"{u.nombre} {u.apellido}", datetime.now(TZ), nombres)
+
+    nombre = f"asistencia_{inicio:%Y-%m-%d}" + (f"_al_{fin:%Y-%m-%d}" if fin != inicio else "")
+    if sede:
+        # Solo ASCII en la cabecera (ej. "Ñ" -> "N")
+        limpio = unicodedata.normalize("NFKD", sede.nombre).encode("ascii", "ignore").decode()
+        nombre += "_" + "".join(c if c.isalnum() else "_" for c in limpio)
+    return Response(contenido, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}.xlsx"'})
 
 
 @app.get("/api/estados", response_model=list[str])
@@ -271,6 +326,7 @@ def ver_config(u: Usuario = Depends(usuario_actual), db: Session = Depends(get_d
         "sesion_configurada": bool(config.erp_phpsessid()),  # solo si existe; nunca el valor
         "sync_activo": scheduler.running,
         "sync_horas": config.SYNC_HORAS,
+        "sync_descripcion": descripcion_sync(),
         "proximas": proximas,
         "foto_base_url": config.FOTO_BASE_URL,
         "zona": config.TZ_LOCAL,
